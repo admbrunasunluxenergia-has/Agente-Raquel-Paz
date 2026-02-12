@@ -1,59 +1,72 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-import uvicorn
-import os
-from agent import process_message
+mport os
+import requests
+from openai import OpenAI
 
-app = FastAPI()
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-@app.get("/")
-async def health_check():
-    return {
-        "status": "online",
-        "agent": "Raquel Paz",
-        "version": "2.0.0"
-    }
+ZAPI_INSTANCE_ID = os.getenv("ZAPI_INSTANCE_ID")
+ZAPI_TOKEN = os.getenv("ZAPI_TOKEN")
+ZAPI_BASE_URL = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_TOKEN}"
 
-@app.post("/webhook")
-async def webhook(request: Request):
+SYSTEM_PROMPT = (
+    "Voce e Raquel Paz, consultora especialista em vendas consultivas de energia fotovoltaica da SUNLUX ENERGIA. "
+    "PERFIL: Idade 30 anos. Estilo firme, agradavel e estrategico. Especialidade: Vendas consultivas de energia solar fotovoltaica. "
+    "REGRAS IMPORTANTES: "
+    "1. NUNCA informar prazo de instalacao. "
+    "2. Se cliente quiser fechar negocio: encaminhar para Bruna Paz (diretora comercial). "
+    "3. Se for suporte/manutencao: encaminhar para Livia no WhatsApp 86 9 9947-6171. "
+    "4. Manter tom profissional, consultivo e estrategico. "
+    "5. Focar em entender a necessidade do cliente antes de oferecer solucoes. "
+    "6. Fazer perguntas qualificadoras para entender o perfil do cliente. "
+    "ABORDAGEM: Seja consultiva, nao apenas vendedora. Entenda a dor do cliente antes de apresentar solucao. "
+    "Qualifique o lead com perguntas estrategicas. Demonstre expertise tecnica quando necessario. "
+    "Mantenha conversas objetivas mas agradaveis."
+)
+
+async def process_message(phone: str, message: str) -> dict:
     try:
-        payload = await request.json()
-        print(f"Payload recebido: {payload}")
-        
-        phone = payload.get("phone")
-        text_data = payload.get("text", {})
-        message = text_data.get("message", "")
-        is_group = payload.get("isGroup", False)
-        
-        if is_group:
-            print(f"Mensagem de grupo ignorada: {phone}")
-            return JSONResponse(
-                status_code=200,
-                content={"status": "ignored", "reason": "group_message"}
-            )
-        
-        if not phone or not message:
-            print(f"Dados invalidos - phone: {phone}, message: {message}")
-            return JSONResponse(
-                status_code=400,
-                content={"error": "Missing phone or message"}
-            )
-        
-        print(f"Processando mensagem de {phone}: {message}")
-        result = await process_message(phone, message)
-        
-        return JSONResponse(
-            status_code=200,
-            content={"status": "success", "result": result}
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": message}
+            ],
+            temperature=0.7,
+            max_tokens=500
         )
+        
+        ai_response = response.choices[0].message.content
+        print(f"Resposta gerada: {ai_response}")
+        
+        send_result = send_zapi_response(phone, ai_response)
+        
+        return {
+            "phone": phone,
+            "message_received": message,
+            "response_sent": ai_response,
+            "zapi_status": send_result
+        }
         
     except Exception as e:
-        print(f"Erro no webhook: {str(e)}")
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e)}
-        )
+        print(f"Erro ao processar mensagem: {str(e)}")
+        error_message = "Desculpe, tive um problema tecnico. Por favor, tente novamente em instantes."
+        send_zapi_response(phone, error_message)
+        raise
 
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+def send_zapi_response(phone: str, message: str) -> dict:
+    try:
+        url = f"{ZAPI_BASE_URL}/send-text"
+        payload = {
+            "phone": phone,
+            "message": message
+        }
+        
+        response = requests.post(url, json=payload, timeout=10)
+        response.raise_for_status()
+        
+        print(f"Mensagem enviada com sucesso para {phone}")
+        return {"status": "sent", "response": response.json()}
+        
+    except Exception as e:
+        print(f"Erro ao enviar mensagem via Z-API: {str(e)}")
+        return {"status": "error", "error": str(e)}
