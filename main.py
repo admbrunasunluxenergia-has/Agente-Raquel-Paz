@@ -8,6 +8,7 @@ app = FastAPI()
 
 ZAPI_INSTANCE_ID = os.getenv("ZAPI_INSTANCE_ID")
 ZAPI_TOKEN = os.getenv("ZAPI_TOKEN")
+ZAPI_CLIENT_TOKEN = os.getenv("ZAPI_CLIENT_TOKEN")
 
 
 @app.get("/")
@@ -30,7 +31,7 @@ async def webhook(request: Request):
         message = text_data.get("message")
         is_group = payload.get("isGroup", False)
 
-        # 🔒 Proteção anti-spam (grupo)
+        # 🔒 Proteção anti-spam (ignorar grupos)
         if is_group:
             print(f"Mensagem de grupo ignorada: {phone}")
             return JSONResponse(
@@ -48,28 +49,40 @@ async def webhook(request: Request):
 
         print(f"Processando mensagem de {phone}: {message}")
 
-        # 🤖 Gera resposta IA
+        # 🤖 Gerar resposta da IA
         try:
             ai_response = await generate_ai_response(message)
             print(f"Resposta gerada: {ai_response}")
         except Exception as e:
-            print(f"Erro ao processar mensagem: {str(e)}")
+            print(f"Erro ao gerar resposta da IA: {str(e)}")
             ai_response = "Desculpe, tive um problema técnico. Por favor, tente novamente em instantes."
 
-        # 📤 Envia resposta via Z-API
+        # 📤 Enviar resposta via Z-API
         send_url = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_TOKEN}/send-text"
+
+        print("URL usada:", send_url)
+        print("Número enviado:", phone)
 
         try:
             response = requests.post(
                 send_url,
+                headers={
+                    "Content-Type": "application/json",
+                    "Client-Token": ZAPI_CLIENT_TOKEN
+                },
                 json={
                     "phone": phone,
                     "message": ai_response
                 },
                 timeout=10
             )
+
+            print("STATUS Z-API:", response.status_code)
+            print("RESPOSTA Z-API:", response.text)
+
             response.raise_for_status()
             print(f"Mensagem enviada com sucesso para {phone}")
+
         except Exception as e:
             print(f"Erro ao enviar mensagem via Z-API: {str(e)}")
 
