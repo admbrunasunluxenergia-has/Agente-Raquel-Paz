@@ -1,10 +1,14 @@
+import os
+import requests
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-import uvicorn
-import os
-from agent import process_message
+from agent import generate_ai_response
 
 app = FastAPI()
+
+ZAPI_INSTANCE_ID = os.getenv("ZAPI_INSTANCE_ID")
+ZAPI_TOKEN = os.getenv("ZAPI_TOKEN")
+
 
 @app.get("/")
 async def health_check():
@@ -14,46 +18,66 @@ async def health_check():
         "version": "2.0.0"
     }
 
+
 @app.post("/webhook")
 async def webhook(request: Request):
     try:
         payload = await request.json()
         print(f"Payload recebido: {payload}")
-        
+
         phone = payload.get("phone")
         text_data = payload.get("text", {})
-        message = text_data.get("message", "")
+        message = text_data.get("message")
         is_group = payload.get("isGroup", False)
-        
+
+        # 🔒 Proteção anti-spam (grupo)
         if is_group:
             print(f"Mensagem de grupo ignorada: {phone}")
             return JSONResponse(
                 status_code=200,
                 content={"status": "ignored", "reason": "group_message"}
             )
-        
+
+        # 🔍 Validação
         if not phone or not message:
-            print(f"Dados invalidos - phone: {phone}, message: {message}")
+            print(f"Dados inválidos - phone: {phone}, message: {message}")
             return JSONResponse(
                 status_code=400,
-                content={"error": "Missing phone or message"}
+                content={"error": "Invalid payload"}
             )
-        
+
         print(f"Processando mensagem de {phone}: {message}")
-        result = await process_message(phone, message)
-        
-        return JSONResponse(
-            status_code=200,
-            content={"status": "success", "result": result}
-        )
-        
+
+        # 🤖 Gera resposta IA
+        try:
+            ai_response = await generate_ai_response(message)
+            print(f"Resposta gerada: {ai_response}")
+        except Exception as e:
+            print(f"Erro ao processar mensagem: {str(e)}")
+            ai_response = "Desculpe, tive um problema técnico. Por favor, tente novamente em instantes."
+
+        # 📤 Envia resposta via Z-API
+        send_url = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_TOKEN}/send-text"
+
+        try:
+            response = requests.post(
+                send_url,
+                json={
+                    "phone": phone,
+                    "message": ai_response
+                },
+                timeout=10
+            )
+            response.raise_for_status()
+            print(f"Mensagem enviada com sucesso para {phone}")
+        except Exception as e:
+            print(f"Erro ao enviar mensagem via Z-API: {str(e)}")
+
+        return JSONResponse(status_code=200, content={"status": "success"})
+
     except Exception as e:
         print(f"Erro no webhook: {str(e)}")
         return JSONResponse(
             status_code=500,
-            content={"error": str(e)}
+            content={"error": "Internal Server Error"}
         )
-
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
