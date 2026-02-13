@@ -1,5 +1,6 @@
 import os
 import requests
+from datetime import datetime
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from agent import generate_ai_response
@@ -8,7 +9,17 @@ app = FastAPI()
 
 ZAPI_INSTANCE_ID = os.getenv("ZAPI_INSTANCE_ID")
 ZAPI_TOKEN = os.getenv("ZAPI_TOKEN")
-ZAPI_CLIENT_TOKEN = os.getenv("ZAPI_CLIENT_TOKEN")
+ZAPI_CLIENT_TOKEN = os.getenv("CLIENTE_TOKEN")
+
+
+def saudacao_por_horario():
+    hora = datetime.now().hour
+    if hora < 12:
+        return "Bom dia"
+    elif hora < 18:
+        return "Boa tarde"
+    else:
+        return "Boa noite"
 
 
 @app.get("/")
@@ -16,7 +27,7 @@ async def health_check():
     return {
         "status": "online",
         "agent": "Raquel Paz",
-        "version": "2.0.0"
+        "version": "3.0.0"
     }
 
 
@@ -28,69 +39,60 @@ async def webhook(request: Request):
 
         phone = payload.get("phone")
         text_data = payload.get("text", {})
-        message = text_data.get("message")
+        message = text_data.get("message", "").lower()
         is_group = payload.get("isGroup", False)
+        from_me = payload.get("fromMe", False)
 
-        # 🔒 Proteção anti-spam (ignorar grupos)
+        # 🔒 Ignorar grupo
         if is_group:
-            print(f"Mensagem de grupo ignorada: {phone}")
-            return JSONResponse(
-                status_code=200,
-                content={"status": "ignored", "reason": "group_message"}
-            )
+            return JSONResponse(status_code=200, content={"status": "ignored_group"})
 
-        # 🔍 Validação
+        # 🔒 Ignorar mensagens enviadas pelo próprio agente (ANTI-LOOP)
+        if from_me:
+            return JSONResponse(status_code=200, content={"status": "ignored_from_me"})
+
         if not phone or not message:
-            print(f"Dados inválidos - phone: {phone}, message: {message}")
-            return JSONResponse(
-                status_code=400,
-                content={"error": "Invalid payload"}
-            )
+            return JSONResponse(status_code=400, content={"error": "Invalid payload"})
 
         print(f"Processando mensagem de {phone}: {message}")
 
-        # 🤖 Gerar resposta da IA
-        try:
-            ai_response = await generate_ai_response(message)
-            print(f"Resposta gerada: {ai_response}")
-        except Exception as e:
-            print(f"Erro ao gerar resposta da IA: {str(e)}")
-            ai_response = "Desculpe, tive um problema técnico. Por favor, tente novamente em instantes."
+        # 🎯 DIRECIONAMENTO AUTOMÁTICO - PÓS VENDA
+        palavras_pos_venda = [
+            "fatura", "geração", "usina", "contestação",
+            "não estou entendendo", "analisar conta"
+        ]
 
-        # 📤 Enviar resposta via Z-API
+        if any(p in message for p in palavras_pos_venda):
+            resposta = (
+                "Entendi 😊 Vou encaminhar você para o nosso setor de pós-venda. "
+                "A consultora Lívia dará continuidade no seu atendimento.\n\n"
+                "👉 WhatsApp: 86 9 9947-6171"
+            )
+        else:
+            # 🤖 IA
+            resposta = await generate_ai_response(message)
+
+        # 📤 Envio via Z-API
         send_url = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_TOKEN}/send-text"
 
-        print("URL usada:", send_url)
-        print("Número enviado:", phone)
+        response = requests.post(
+            send_url,
+            headers={
+                "Content-Type": "application/json",
+                "Client-Token": ZAPI_CLIENT_TOKEN
+            },
+            json={
+                "phone": phone,
+                "message": resposta
+            },
+            timeout=10
+        )
 
-        try:
-            response = requests.post(
-                send_url,
-                headers={
-                    "Content-Type": "application/json",
-                    "Client-Token": ZAPI_CLIENT_TOKEN
-                },
-                json={
-                    "phone": phone,
-                    "message": ai_response
-                },
-                timeout=10
-            )
-
-            print("STATUS Z-API:", response.status_code)
-            print("RESPOSTA Z-API:", response.text)
-
-            response.raise_for_status()
-            print(f"Mensagem enviada com sucesso para {phone}")
-
-        except Exception as e:
-            print(f"Erro ao enviar mensagem via Z-API: {str(e)}")
+        print("STATUS Z-API:", response.status_code)
+        print("RESPOSTA Z-API:", response.text)
 
         return JSONResponse(status_code=200, content={"status": "success"})
 
     except Exception as e:
-        print(f"Erro no webhook: {str(e)}")
-        return JSONResponse(
-            status_code=500,
-            content={"error": "Internal Server Error"}
-        )
+        print("Erro no webhook:", str(e))
+        return JSONResponse(status_code=500, content={"error": "Internal Server Error"})
