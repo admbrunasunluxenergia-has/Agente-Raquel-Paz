@@ -26,9 +26,11 @@ def saudacao_por_horario():
 def enviar_mensagem(phone, message):
     try:
         url = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_TOKEN}/send-text"
+
         headers = {
             "Client-Token": ZAPI_CLIENT_TOKEN
         }
+
         payload = {
             "phone": phone,
             "message": message
@@ -37,6 +39,7 @@ def enviar_mensagem(phone, message):
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         response.raise_for_status()
         print(f"Mensagem enviada para {phone}")
+
     except Exception as e:
         print("Erro ao enviar mensagem:", str(e))
 
@@ -71,6 +74,9 @@ async def webhook(request: Request):
             return JSONResponse({"status": "ignored_group"}, status_code=200)
 
         message_id = payload.get("messageId")
+
+        if not message_id:
+            return JSONResponse({"status": "no_message_id"}, status_code=200)
 
         if message_id in ULTIMAS_MENSAGENS:
             print("Mensagem duplicada ignorada")
