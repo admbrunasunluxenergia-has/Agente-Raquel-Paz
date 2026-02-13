@@ -12,7 +12,10 @@ ZAPI_TOKEN = os.getenv("ZAPI_TOKEN")
 ZAPI_CLIENT_TOKEN = os.getenv("CLIENTE_TOKEN")
 CRM_WEBHOOK_URL = os.getenv("CRM_WEBHOOK_URL")
 
-ULTIMAS_MENSAGENS = set()
+# 🔒 Controle de duplicidade limitado
+ULTIMAS_MENSAGENS = []
+MAX_CACHE = 200
+
 
 def saudacao_por_horario():
     hora = datetime.now().hour
@@ -22,6 +25,7 @@ def saudacao_por_horario():
         return "Boa tarde"
     else:
         return "Boa noite"
+
 
 def enviar_mensagem(phone, message):
     try:
@@ -43,7 +47,12 @@ def enviar_mensagem(phone, message):
     except Exception as e:
         print("Erro ao enviar mensagem:", str(e))
 
+
 def salvar_no_crm(phone, mensagem):
+    if not CRM_WEBHOOK_URL:
+        print("CRM_WEBHOOK_URL não configurado.")
+        return
+
     try:
         requests.post(
             CRM_WEBHOOK_URL,
@@ -57,12 +66,15 @@ def salvar_no_crm(phone, mensagem):
             timeout=5
         )
         print("Lead salvo no CRM.")
+
     except Exception as e:
         print("Erro CRM:", str(e))
+
 
 @app.get("/")
 async def health():
     return {"status": "online", "agent": "Raquel Paz"}
+
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -70,8 +82,13 @@ async def webhook(request: Request):
         payload = await request.json()
         print("Payload recebido:", payload)
 
+        # 🚫 Ignorar grupos
         if payload.get("isGroup"):
             return JSONResponse({"status": "ignored_group"}, status_code=200)
+
+        # 🚫 Ignorar mensagens enviadas pelo próprio bot
+        if payload.get("fromMe"):
+            return JSONResponse({"status": "ignored_self"}, status_code=200)
 
         message_id = payload.get("messageId")
 
@@ -82,10 +99,19 @@ async def webhook(request: Request):
             print("Mensagem duplicada ignorada")
             return JSONResponse({"status": "duplicate"}, status_code=200)
 
-        ULTIMAS_MENSAGENS.add(message_id)
+        # 🔄 Controle de memória
+        ULTIMAS_MENSAGENS.append(message_id)
+        if len(ULTIMAS_MENSAGENS) > MAX_CACHE:
+            ULTIMAS_MENSAGENS.pop(0)
 
         phone = payload.get("phone")
+
+        # 🟡 Tratamento texto
         message = payload.get("text", {}).get("message")
+
+        # 🟡 Tratamento áudio
+        if not message and payload.get("audio"):
+            message = "O cliente enviou um áudio."
 
         if not phone or not message:
             return JSONResponse({"status": "invalid"}, status_code=200)
