@@ -1,93 +1,43 @@
-import os
-import requests
-from fastapi import FastAPI, Request
-from openai import OpenAI
+# main.py
 
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
+import uvicorn
+import os
+from agent import process_message
+
+# Inicializa a aplicação FastAPI
 app = FastAPI()
 
-# =========================
-# VARIÁVEIS DE AMBIENTE
-# =========================
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-ZAPI_INSTANCE_ID = os.getenv("ZAPI_INSTANCE_ID")
-ZAPI_TOKEN = os.getenv("ZAPI_TOKEN")
-ZAPI_CLIENT_TOKEN = os.getenv("ZAPI_CLIENT_TOKEN")
-
-client = OpenAI(api_key=OPENAI_API_KEY)
-
-# =========================
-# FUNÇÃO OPENAI
-# =========================
-
-def gerar_resposta(mensagem_usuario):
-
-    prompt_sistema = """
-Você é Raquel Paz, consultora especialista da SUNLUX Energia Solar.
-
-Responda de forma profissional, clara e objetiva.
-Seu objetivo é:
-- Entender a necessidade do cliente
-- Pedir informações se necessário
-- Conduzir para orçamento
-- Agendar visita quando possível
-"""
-
-    resposta = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": prompt_sistema},
-            {"role": "user", "content": mensagem_usuario}
-        ],
-        temperature=0.7
-    )
-
-    return resposta.choices[0].message.content
-
-
-# =========================
-# ENVIO PARA Z-API
-# =========================
-
-def enviar_mensagem(numero, mensagem):
-
-    url = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_TOKEN}/send-text"
-
-    headers = {
-        "Client-Token": ZAPI_CLIENT_TOKEN,
-        "Content-Type": "application/json"
-    }
-
-    payload = {
-        "phone": numero,
-        "message": mensagem
-    }
-
-    response = requests.post(url, json=payload, headers=headers)
-
-    if response.status_code != 200:
-        print("Erro Z-API:", response.text)
-
-    return response.status_code
-
-
-# =========================
-# WEBHOOK
-# =========================
+@app.get("/")
+def health_check():
+    """Endpoint para verificação de saúde da API."""
+    return {"status": "ok", "agent": "Raquel Paz", "version": "1.0.0"}
 
 @app.post("/webhook")
-async def webhook(request: Request):
+async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
+    """
+    Endpoint que recebe os webhooks da Z-API.
+    """
+    try:
+        # Pega o corpo da requisição em JSON
+        data = await request.json()
+        print("Webhook recebido:", data)
+        
+        # Adiciona o processamento da mensagem a uma tarefa em segundo plano
+        # Isso faz com que a API responda imediatamente com 200 OK para a Z-API,
+        # evitando timeouts enquanto a IA processa a resposta.
+        background_tasks.add_task(process_message, data)
+        
+        return {"status": "received"}
 
-    data = await request.json()
-    print("Payload recebido:", data)
+    except Exception as e:
+        # Se o corpo da requisição não for um JSON válido ou outro erro ocorrer
+        print(f"Erro no endpoint /webhook: {e}")
+        raise HTTPException(status_code=400, detail="Invalid request format")
 
-    if "text" not in data:
-        return {"status": "ok"}
+if __name__ == "__main__":
+    # Pega a porta da variável de ambiente, com 8000 como padrão
+    port = int(os.environ.get("PORT", 8000))
+    # Executa o servidor Uvicorn. O host 0.0.0.0 é essencial para o Railway.
+    uvicorn.run(app, host="0.0.0.0", port=port)
 
-    mensagem = data["text"]["message"]
-    numero = data["phone"]
-
-    resposta = gerar_resposta(mensagem)
-    enviar_mensagem(numero, resposta)
-
-    return {"status": "ok"}
