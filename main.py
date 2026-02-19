@@ -19,7 +19,7 @@ def health():
     }
 
 @app.post("/webhook")
-async def webhook(request: Request, background_tasks: BackgroundTasks):
+async def webhook(request: Request):
 
     data = await request.json()
     print("📩 Payload recebido:", data)
@@ -43,46 +43,8 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
             print("❌ Erro OpenAI:", e)
             return {"status": "openai error"}
 
-        background_tasks.add_task(enviar_whatsapp, numero, resposta)
-        background_tasks.add_task(registrar_crm, numero, mensagem)
+        # EXECUTANDO DIRETO
+        enviar_whatsapp(numero, resposta)
+        registrar_crm(numero, mensagem)
 
     return {"status": "received"}
-
-
-def enviar_whatsapp(numero, mensagem):
-
-    url = f"https://api.z-api.io/instances/{ZAPI_INSTANCE}/token/{ZAPI_TOKEN}/send-text"
-
-    payload = {
-        "phone": numero,
-        "message": mensagem
-    }
-
-    response = requests.post(url, json=payload)
-
-    print("📤 Envio WhatsApp status:", response.status_code)
-    print("📤 Resposta ZAPI:", response.text)
-
-
-def registrar_crm(numero, mensagem):
-
-    if not CRM_WEBHOOK_URL:
-        print("⚠️ CRM_WEBHOOK_URL não configurado")
-        return
-
-    payload = {
-        "nome": "",
-        "telefone": numero,
-        "cidade": "",
-        "grupo": "",
-        "consumo": "",
-        "valor_proposta": "",
-        "status": "Novo Lead",
-        "observacoes": mensagem
-    }
-
-    try:
-        response = requests.post(CRM_WEBHOOK_URL, json=payload)
-        print("📊 CRM status:", response.status_code)
-    except Exception as e:
-        print("❌ Erro CRM:", e)
