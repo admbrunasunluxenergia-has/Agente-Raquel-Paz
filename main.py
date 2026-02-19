@@ -18,7 +18,7 @@ def health():
     return {
         "status": "ok",
         "agent": "Raquel Paz",
-        "version": "2.0"
+        "version": "2.1"
     }
 
 # ==========================================
@@ -28,25 +28,47 @@ def health():
 async def webhook(request: Request, background_tasks: BackgroundTasks):
 
     data = await request.json()
+    print("📩 WEBHOOK RECEBIDO:", data)
 
-    if not data.get("isGroup") and data.get("text"):
-        numero = data.get("phone")
-        mensagem = data.get("text", {}).get("message")
+    if data.get("isGroup"):
+        return {"status": "grupo ignorado"}
 
-        resposta = gerar_resposta(mensagem)
+    numero = data.get("phone")
 
-        # Enviar resposta WhatsApp
-        background_tasks.add_task(enviar_whatsapp, numero, resposta)
+    mensagem = None
 
-        # Registrar no CRM
-        background_tasks.add_task(registrar_crm, numero, mensagem)
+    # Detectar vários formatos possíveis da Z-API
+    if isinstance(data.get("text"), dict):
+        mensagem = data.get("text", {}).get("message") or data.get("text", {}).get("body")
 
-    return {"status": "received"}
+    if not mensagem:
+        mensagem = data.get("body")
+
+    if not mensagem:
+        mensagem = data.get("message")
+
+    if not mensagem:
+        print("⚠ Nenhuma mensagem detectada")
+        return {"status": "sem mensagem"}
+
+    print("📨 Mensagem:", mensagem)
+
+    resposta = gerar_resposta(mensagem)
+
+    background_tasks.add_task(enviar_whatsapp, numero, resposta)
+    background_tasks.add_task(registrar_crm, numero, mensagem)
+
+    return {"status": "ok"}
+
 
 # ==========================================
 # ENVIAR WHATSAPP
 # ==========================================
 def enviar_whatsapp(numero, mensagem):
+
+    if not ZAPI_INSTANCE or not ZAPI_TOKEN:
+        print("❌ ZAPI não configurada")
+        return
 
     url = f"https://api.z-api.io/instances/{ZAPI_INSTANCE}/token/{ZAPI_TOKEN}/send-text"
 
@@ -55,7 +77,12 @@ def enviar_whatsapp(numero, mensagem):
         "message": mensagem
     }
 
-    requests.post(url, json=payload)
+    try:
+        requests.post(url, json=payload)
+        print("✅ Mensagem enviada")
+    except Exception as e:
+        print("❌ Erro ao enviar WhatsApp:", e)
+
 
 # ==========================================
 # REGISTRAR NO CRM (Apps Script)
@@ -63,6 +90,7 @@ def enviar_whatsapp(numero, mensagem):
 def registrar_crm(numero, mensagem):
 
     if not CRM_WEBHOOK_URL:
+        print("⚠ CRM não configurado")
         return
 
     payload = {
@@ -78,5 +106,6 @@ def registrar_crm(numero, mensagem):
 
     try:
         requests.post(CRM_WEBHOOK_URL, json=payload)
-    except:
-        pass
+        print("✅ Registrado no CRM")
+    except Exception as e:
+        print("❌ Erro CRM:", e)
