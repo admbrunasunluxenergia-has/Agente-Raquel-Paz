@@ -1,50 +1,38 @@
-# Agente Raquel Paz
+# 🚀 Agente Raquel Paz
 
-Agente de IA para vendas consultivas de energia fotovoltaica.
+Agente de IA para atendimento e vendas consultivas de energia fotovoltaica (SUNLUX).
 
-## Estrutura
+Integrações:
+- WhatsApp (Z-API)
+- OpenAI
+- Google Sheets (CRM via Apps Script)
+- Railway (Deploy)
 
-```
+---
+
+# 📁 Estrutura do Projeto
+
 agente-raquel-paz/
-├── main.py              # API FastAPI
-├── agent.py             # Lógica do agente
+├── main.py              # API FastAPI (webhook e health check)
+├── agent.py             # Lógica da IA e regras comerciais
 ├── requirements.txt     # Dependências
-├── Procfile             # Comando Railway
-├── runtime.txt          # Versão Python
-└── .env.example         # Exemplo de variáveis
-```
+├── Procfile             # Comando de inicialização Railway
+├── runtime.txt          # Versão do Python
+└── .env.example         # Modelo de variáveis de ambiente
 
-## Instalação Local
+---
 
-```bash
-# Instalar dependências
-pip install -r requirements.txt
+# 🧠 Funcionalidades Atuais
 
-# Configurar variáveis
-cp .env.example .env
-# Editar .env com suas credenciais
+✅ Recebe mensagens do WhatsApp via webhook  
+✅ Processa texto com OpenAI  
+✅ Responde automaticamente  
+✅ Envia dados para CRM (Google Sheets)  
+✅ Health Check ativo  
+✅ Deploy automático via Railway  
 
-# Executar
-uvicorn main:app --reload
-```
+---
 
-## Deploy no Railway
+# ⚙️ Variáveis de Ambiente
 
-1. Criar projeto no Railway
-2. Conectar repositório GitHub
-3. Adicionar variáveis de ambiente:
-   - `OPENAI_API_KEY`
-   - `PORT=8000`
-4. Deploy automático
-
-## Endpoints
-
-- `GET /` - Health check
-- `POST /webhook` - Receber mensagens
-
-## Variáveis de Ambiente
-
-```
-OPENAI_API_KEY=sk-proj-...
-PORT=8000
-```
+Configurar no Railway:
