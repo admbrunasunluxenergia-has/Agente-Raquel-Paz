@@ -18,7 +18,7 @@ ZAPI_INSTANCE = os.getenv("ZAPI_INSTANCE")
 CRM_WEBHOOK_URL = os.getenv("CRM_WEBHOOK_URL")
 
 # =============================
-# ROTA DE SAÚDE (TESTE)
+# ROTA TESTE
 # =============================
 
 @app.get("/")
@@ -26,29 +26,24 @@ def health():
     return {
         "status": "ok",
         "agent": "Raquel Paz",
-        "version": "2.2"
+        "version": "3.0"
     }
 
 # =============================
-# WEBHOOK Z-API
+# WEBHOOK
 # =============================
 
 @app.post("/webhook")
 async def webhook(request: Request):
 
     data = await request.json()
-    print("📩 PAYLOAD RECEBIDO:")
+    print("🔥 PAYLOAD RECEBIDO:")
     print(data)
 
-    # Ignora grupos
     if data.get("isGroup"):
-        print("⚠️ Mensagem de grupo ignorada")
         return {"status": "group ignored"}
 
-    # Captura número
     numero = data.get("phone")
-
-    # Captura mensagem (estrutura padrão Z-API)
     mensagem = None
 
     if isinstance(data.get("text"), dict):
@@ -61,38 +56,23 @@ async def webhook(request: Request):
     print("💬 Mensagem:", mensagem)
 
     if not numero or not mensagem:
-        print("⚠️ Dados insuficientes")
         return {"status": "no message"}
-
-    # =============================
-    # GERA RESPOSTA COM OPENAI
-    # =============================
 
     try:
         resposta = gerar_resposta(mensagem)
-        print("🤖 Resposta gerada:")
-        print(resposta)
+        print("🤖 Resposta:", resposta)
     except Exception as e:
-        print("❌ ERRO OPENAI:", e)
+        print("❌ Erro OpenAI:", e)
         return {"status": "openai error"}
 
-    # =============================
-    # ENVIA PARA Z-API
-    # =============================
-
     enviar_whatsapp(numero, resposta)
-
-    # =============================
-    # REGISTRA NO CRM
-    # =============================
-
     registrar_crm(numero, mensagem)
 
     return {"status": "success"}
 
 
 # =============================
-# ENVIO WHATSAPP
+# ENVIO Z-API
 # =============================
 
 def enviar_whatsapp(numero, mensagem):
@@ -110,31 +90,23 @@ def enviar_whatsapp(numero, mensagem):
 
     try:
         response = requests.post(url, json=payload)
-
-        print("📤 Status envio:", response.status_code)
+        print("📤 Status:", response.status_code)
         print("📤 Resposta ZAPI:", response.text)
-
     except Exception as e:
-        print("❌ ERRO ENVIO ZAPI:", e)
+        print("❌ Erro envio:", e)
 
 
 # =============================
-# REGISTRO CRM
+# CRM
 # =============================
 
 def registrar_crm(numero, mensagem):
 
     if not CRM_WEBHOOK_URL:
-        print("⚠️ CRM_WEBHOOK_URL não configurado")
         return
 
     payload = {
-        "nome": "",
         "telefone": numero,
-        "cidade": "",
-        "grupo": "",
-        "consumo": "",
-        "valor_proposta": "",
         "status": "Novo Lead",
         "observacoes": mensagem
     }
@@ -143,4 +115,4 @@ def registrar_crm(numero, mensagem):
         response = requests.post(CRM_WEBHOOK_URL, json=payload)
         print("📊 CRM status:", response.status_code)
     except Exception as e:
-        print("❌ ERRO CRM:", e)
+        print("❌ Erro CRM:", e)
