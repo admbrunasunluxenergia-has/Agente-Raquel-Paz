@@ -3,18 +3,15 @@ import requests
 from fastapi import FastAPI, Request
 from agent import gerar_resposta
 
-# =============================
-# INICIALIZAÇÃO DO APP
-# =============================
-
 app = FastAPI()
 
 # =============================
 # VARIÁVEIS DE AMBIENTE
 # =============================
 
+ZAPI_INSTANCE_ID = os.getenv("ZAPI_INSTANCE_ID")
 ZAPI_TOKEN = os.getenv("ZAPI_TOKEN")
-ZAPI_INSTANCE = os.getenv("ZAPI_INSTANCE")
+ZAPI_CLIENT_TOKEN = os.getenv("ZAPI_CLIENT_TOKEN")
 CRM_WEBHOOK_URL = os.getenv("CRM_WEBHOOK_URL")
 
 # =============================
@@ -26,11 +23,11 @@ def health():
     return {
         "status": "ok",
         "agent": "Raquel Paz",
-        "version": "3.0"
+        "version": "4.0"
     }
 
 # =============================
-# WEBHOOK
+# WEBHOOK RECEBIMENTO
 # =============================
 
 @app.post("/webhook")
@@ -58,12 +55,8 @@ async def webhook(request: Request):
     if not numero or not mensagem:
         return {"status": "no message"}
 
-    try:
-        resposta = gerar_resposta(mensagem)
-        print("🤖 Resposta:", resposta)
-    except Exception as e:
-        print("❌ Erro OpenAI:", e)
-        return {"status": "openai error"}
+    resposta = gerar_resposta(mensagem)
+    print("🤖 Resposta:", resposta)
 
     enviar_whatsapp(numero, resposta)
     registrar_crm(numero, mensagem)
@@ -77,27 +70,45 @@ async def webhook(request: Request):
 
 def enviar_whatsapp(numero, mensagem):
 
-    if not ZAPI_INSTANCE or not ZAPI_TOKEN:
-        print("❌ ZAPI não configurado")
+    if not ZAPI_INSTANCE_ID:
+        print("❌ ZAPI_INSTANCE_ID não encontrado")
         return
 
-    url = f"https://api.z-api.io/instances/{ZAPI_INSTANCE}/token/{ZAPI_TOKEN}/send-text"
+    if not ZAPI_TOKEN:
+        print("❌ ZAPI_TOKEN não encontrado")
+        return
+
+    if not ZAPI_CLIENT_TOKEN:
+        print("❌ ZAPI_CLIENT_TOKEN não encontrado")
+        return
+
+    url = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_TOKEN}/send-text"
+
+    headers = {
+        "Client-Token": ZAPI_CLIENT_TOKEN,
+        "Content-Type": "application/json"
+    }
 
     payload = {
         "phone": numero,
         "message": mensagem
     }
 
+    print("📤 Enviando mensagem para:", numero)
+    print("🔗 URL:", url)
+
     try:
-        response = requests.post(url, json=payload)
+        response = requests.post(url, json=payload, headers=headers)
+
         print("📤 Status:", response.status_code)
         print("📤 Resposta ZAPI:", response.text)
+
     except Exception as e:
         print("❌ Erro envio:", e)
 
 
 # =============================
-# CRM
+# CRM (opcional)
 # =============================
 
 def registrar_crm(numero, mensagem):
@@ -114,5 +125,6 @@ def registrar_crm(numero, mensagem):
     try:
         response = requests.post(CRM_WEBHOOK_URL, json=payload)
         print("📊 CRM status:", response.status_code)
+
     except Exception as e:
         print("❌ Erro CRM:", e)
