@@ -1,21 +1,11 @@
 import os
 import unicodedata
-import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from openai import OpenAI
 
-logger = logging.getLogger(__name__)
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Timeout de segurança
-client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY"),
-    timeout=10
-)
-
-# ==================================================
-# NORMALIZAÇÃO
-# ==================================================
 
 def normalizar(texto: str) -> str:
     texto = texto.lower().strip()
@@ -23,10 +13,6 @@ def normalizar(texto: str) -> str:
     texto = texto.encode("ascii", "ignore").decode("utf-8")
     return texto
 
-
-# ==================================================
-# CLASSIFICAÇÃO MANUAL
-# ==================================================
 
 def classificar_mensagem(mensagem):
 
@@ -54,7 +40,6 @@ def classificar_mensagem(mensagem):
         "boa tarde", "boa noite"
     ]
 
-    # PRIORIDADE CORRETA
     if any(p in msg for p in suporte):
         return "SUPORTE"
 
@@ -64,16 +49,11 @@ def classificar_mensagem(mensagem):
     if any(p in msg for p in orcamento):
         return "ORCAMENTO"
 
-    # Saudação se começar com cumprimento
     if any(msg.startswith(s) for s in saudacoes):
         return "SAUDACAO"
 
     return "OUTRO"
 
-
-# ==================================================
-# SAUDAÇÃO COM TIMEZONE CORRETO
-# ==================================================
 
 def saudacao_por_horario():
     hora = datetime.now(ZoneInfo("America/Sao_Paulo")).hour
@@ -86,26 +66,16 @@ def saudacao_por_horario():
         return "Boa noite"
 
 
-# ==================================================
-# GERAÇÃO DE RESPOSTA
-# ==================================================
-
 def gerar_resposta(mensagem_usuario, categoria, contexto_extra=""):
 
     try:
 
-        # =========================
-        # PRAZO
-        # =========================
         if categoria == "PRAZO":
             return (
                 "Eu entendo sua preocupação e agradeço por me avisar.\n\n"
                 "Vou verificar internamente com o setor responsável e retorno para você com a posição correta, tudo bem?"
             )
 
-        # =========================
-        # SUPORTE
-        # =========================
         if categoria == "SUPORTE":
             return (
                 "Obrigada pelo seu contato!\n\n"
@@ -113,9 +83,6 @@ def gerar_resposta(mensagem_usuario, categoria, contexto_extra=""):
                 "Vou encaminhar sua mensagem para ela e em breve você receberá o suporte necessário."
             )
 
-        # =========================
-        # SAUDAÇÃO
-        # =========================
         if categoria == "SAUDACAO":
             saudacao = saudacao_por_horario()
             return (
@@ -124,9 +91,6 @@ def gerar_resposta(mensagem_usuario, categoria, contexto_extra=""):
                 "Como posso te ajudar hoje?"
             )
 
-        # =========================
-        # ORÇAMENTO (USA GPT)
-        # =========================
         if categoria == "ORCAMENTO":
 
             prompt = f"""
@@ -155,31 +119,14 @@ Peça:
                 model="gpt-4o-mini",
                 temperature=0.3,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": "Você é especialista em vendas consultivas de energia solar."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
+                    {"role": "system", "content": "Você é especialista em vendas consultivas de energia solar."},
+                    {"role": "user", "content": prompt}
                 ],
             )
 
-            texto = response.choices[0].message.content
-
-            # Limite de segurança
-            if len(texto) > 2000:
-                texto = texto[:2000]
-
-            return texto
-
-        # =========================
-        # OUTRO
-        # =========================
+            return response.choices[0].message.content
 
         return "Pode me explicar um pouco melhor para eu te ajudar da melhor forma?"
 
-    except Exception as e:
-        logger.error(f"❌ Erro interno gerar_resposta: {e}")
+    except Exception:
         return "Tive uma instabilidade interna agora. Pode repetir sua mensagem por favor?"
