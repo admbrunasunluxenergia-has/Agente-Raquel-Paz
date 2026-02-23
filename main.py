@@ -1,7 +1,8 @@
 import os
+import logging
 import requests
 from fastapi import FastAPI, Request
-from agent import gerar_resposta
+from agent import gerar_resposta, classificar_mensagem
 from database import (
     criar_tabelas,
     conectar,
@@ -9,22 +10,29 @@ from database import (
     buscar_contato
 )
 
+# ==================================================
+# CONFIGURAÇÃO LOG
+# ==================================================
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 app = FastAPI()
 
-# =============================
-# INICIALIZAÇÃO DO BANCO
-# =============================
+# ==================================================
+# STARTUP
+# ==================================================
 
 @app.on_event("startup")
 def startup():
-    print("🚀 Iniciando aplicação...")
+    logger.info("🚀 Iniciando aplicação...")
     criar_tabelas()
-    print("✅ Banco pronto")
+    logger.info("✅ Banco pronto")
 
 
-# =============================
+# ==================================================
 # VARIÁVEIS DE AMBIENTE
-# =============================
+# ==================================================
 
 ZAPI_INSTANCE_ID = os.getenv("ZAPI_INSTANCE_ID")
 ZAPI_TOKEN = os.getenv("ZAPI_TOKEN")
@@ -32,37 +40,38 @@ ZAPI_CLIENT_TOKEN = os.getenv("ZAPI_CLIENT_TOKEN")
 CRM_WEBHOOK_URL = os.getenv("CRM_WEBHOOK_URL")
 
 
-# =============================
-# ROTA HEALTH CHECK
-# =============================
+# ==================================================
+# HEALTH CHECK
+# ==================================================
 
 @app.get("/")
 def health():
     return {
         "status": "ok",
         "agent": "Raquel Paz",
-        "version": "6.0"
+        "version": "7.0-production"
     }
 
 
-# =============================
-# WEBHOOK RECEBIMENTO Z-API
-# =============================
+# ==================================================
+# WEBHOOK Z-API
+# ==================================================
 
 @app.post("/webhook")
 async def webhook(request: Request):
 
     data = await request.json()
-    print("🔥 PAYLOAD RECEBIDO:", data)
+    logger.info(f"🔥 Payload recebido: {data}")
 
-    # 🔁 BLOQUEIO LOOP (ESSENCIAL)
-    if data.get("fromMe"):
-        print("🔁 Ignorado: mensagem enviada pelo próprio agente")
-        return {"status": "ignored self message"}
+    # 🔁 Ignorar mensagens do próprio agente
+    if data.get("fromMe") is True:
+        logger.info("🔁 Ignorado: mensagem enviada pelo agente")
+        return {"status": "ignored_self"}
 
-    if data.get("isGroup"):
-        print("👥 Grupo ignorado")
-        return {"status": "group ignored"}
+    # 👥 Ignorar grupos
+    if data.get("isGroup") is True:
+        logger.info("👥 Grupo ignorado")
+        return {"status": "ignored_group"}
 
     numero = data.get("phone")
     mensagem = None
@@ -73,15 +82,22 @@ async def webhook(request: Request):
         mensagem = data.get("message")
 
     if not numero or not mensagem:
-        print("⚠️ Mensagem inválida")
-        return {"status": "no message"}
+        logger.warning("⚠️ Payload inválido")
+        return {"status": "invalid_payload"}
 
-    print("📞 Número:", numero)
-    print("💬 Mensagem:", mensagem)
+    logger.info(f"📞 Número: {numero}")
+    logger.info(f"💬 Mensagem: {mensagem}")
 
-    # =============================
-    # BUSCAR HISTÓRICO
-    # =============================
+    # ==================================================
+    # CLASSIFICAÇÃO (SOMENTE MENSAGEM ORIGINAL)
+    # ==================================================
+
+    categoria = classificar_mensagem(mensagem)
+    logger.info(f"📂 Categoria detectada: {categoria}")
+
+    # ==================================================
+    # BUSCAR CONTEXTO (APÓS CLASSIFICAR)
+    # ==================================================
 
     historico = buscar_historico(numero)
     contato = buscar_contato(numero)
@@ -97,44 +113,47 @@ async def webhook(request: Request):
         for h in historico[-5:]:
             contexto_extra += f"Cliente: {h[0]}\nRaquel: {h[1]}\n"
 
-    # =============================
+    # ==================================================
     # GERAR RESPOSTA
-    # =============================
+    # ==================================================
 
     try:
-        resposta = gerar_resposta(mensagem + contexto_extra)
-        print("🤖 Resposta:", resposta)
+        resposta = gerar_resposta(
+            mensagem_usuario=mensagem,
+            categoria=categoria,
+            contexto_extra=contexto_extra
+        )
+        logger.info(f"🤖 Resposta gerada")
     except Exception as e:
-        print("❌ Erro ao gerar resposta:", e)
-        return {"status": "openai error"}
+        logger.error(f"❌ Erro OpenAI: {e}")
+        return {"status": "openai_error"}
 
-    # =============================
+    # ==================================================
     # SALVAR NO BANCO
-    # =============================
+    # ==================================================
 
-    salvar_mensagem(numero, mensagem, resposta)
+    salvar_mensagem(numero, mensagem, resposta, categoria)
 
-    # =============================
+    # ==================================================
     # ENVIAR WHATSAPP
-    # =============================
+    # ==================================================
 
     enviar_whatsapp(numero, resposta)
 
-    # =============================
-    # REGISTRAR CRM
-    # =============================
+    # ==================================================
+    # CRM
+    # ==================================================
 
     registrar_crm(numero, mensagem)
 
     return {"status": "success"}
 
 
-# =============================
-# SALVAR MENSAGEM NO POSTGRES
-# =============================
+# ==================================================
+# SALVAR MENSAGEM
+# ==================================================
 
-def salvar_mensagem(numero, mensagem, resposta):
-
+def salvar_mensagem(numero, mensagem, resposta, categoria):
     try:
         conn = conectar()
         cursor = conn.cursor()
@@ -142,26 +161,26 @@ def salvar_mensagem(numero, mensagem, resposta):
         cursor.execute("""
             INSERT INTO mensagens (telefone, mensagem, resposta, categoria)
             VALUES (%s, %s, %s, %s)
-        """, (numero, mensagem, resposta, "auto"))
+        """, (numero, mensagem, resposta, categoria))
 
         conn.commit()
         cursor.close()
         conn.close()
 
-        print("💾 Mensagem salva no banco")
+        logger.info("💾 Mensagem salva")
 
     except Exception as e:
-        print("❌ Erro ao salvar no banco:", e)
+        logger.error(f"❌ Erro ao salvar mensagem: {e}")
 
 
-# =============================
+# ==================================================
 # ENVIO Z-API
-# =============================
+# ==================================================
 
 def enviar_whatsapp(numero, mensagem):
 
-    if not ZAPI_INSTANCE_ID or not ZAPI_TOKEN or not ZAPI_CLIENT_TOKEN:
-        print("❌ Variáveis ZAPI ausentes")
+    if not all([ZAPI_INSTANCE_ID, ZAPI_TOKEN, ZAPI_CLIENT_TOKEN]):
+        logger.error("❌ Variáveis ZAPI ausentes")
         return
 
     url = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_TOKEN}/send-text"
@@ -177,18 +196,16 @@ def enviar_whatsapp(numero, mensagem):
     }
 
     try:
-        response = requests.post(url, json=payload, headers=headers)
-
-        print("📤 Status ZAPI:", response.status_code)
-        print("📤 Resposta ZAPI:", response.text)
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        logger.info(f"📤 ZAPI status: {response.status_code}")
 
     except Exception as e:
-        print("❌ Erro envio WhatsApp:", e)
+        logger.error(f"❌ Erro envio WhatsApp: {e}")
 
 
-# =============================
-# CRM (OPCIONAL)
-# =============================
+# ==================================================
+# CRM
+# ==================================================
 
 def registrar_crm(numero, mensagem):
 
@@ -202,8 +219,8 @@ def registrar_crm(numero, mensagem):
     }
 
     try:
-        response = requests.post(CRM_WEBHOOK_URL, json=payload)
-        print("📊 CRM status:", response.status_code)
+        requests.post(CRM_WEBHOOK_URL, json=payload, timeout=5)
+        logger.info("📊 CRM registrado")
 
     except Exception as e:
-        print("❌ Erro CRM:", e)
+        logger.error(f"❌ Erro CRM: {e}")
