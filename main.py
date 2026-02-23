@@ -7,7 +7,8 @@ from database import (
     criar_tabelas,
     conectar,
     buscar_historico,
-    buscar_contato
+    buscar_contato,
+    mensagem_existe  # 🔒 NOVO
 )
 
 # ==================================================
@@ -49,7 +50,7 @@ def health():
     return {
         "status": "ok",
         "agent": "Raquel Paz",
-        "version": "7.0-production"
+        "version": "8.0-stable"
     }
 
 
@@ -75,6 +76,7 @@ async def webhook(request: Request):
 
     numero = data.get("phone")
     mensagem = None
+    mensagem_id = data.get("messageId") or data.get("id")
 
     if isinstance(data.get("text"), dict):
         mensagem = data.get("text", {}).get("message")
@@ -85,18 +87,26 @@ async def webhook(request: Request):
         logger.warning("⚠️ Payload inválido")
         return {"status": "invalid_payload"}
 
+    # ==================================================
+    # 🔒 ANTI DUPLICIDADE (ANTES DE TUDO)
+    # ==================================================
+
+    if mensagem_existe(mensagem_id):
+        logger.info("🔁 Mensagem duplicada ignorada")
+        return {"status": "duplicate_ignored"}
+
     logger.info(f"📞 Número: {numero}")
     logger.info(f"💬 Mensagem: {mensagem}")
 
     # ==================================================
-    # CLASSIFICAÇÃO (SOMENTE MENSAGEM ORIGINAL)
+    # CLASSIFICAÇÃO
     # ==================================================
 
     categoria = classificar_mensagem(mensagem)
     logger.info(f"📂 Categoria detectada: {categoria}")
 
     # ==================================================
-    # BUSCAR CONTEXTO (APÓS CLASSIFICAR)
+    # CONTEXTO
     # ==================================================
 
     historico = buscar_historico(numero)
@@ -105,7 +115,7 @@ async def webhook(request: Request):
     contexto_extra = ""
 
     if contato:
-        nome, tipo = contato
+        nome, tipo, etapa = contato
         contexto_extra += f"\nContato identificado: {nome} ({tipo})"
 
     if historico:
@@ -123,7 +133,7 @@ async def webhook(request: Request):
             categoria=categoria,
             contexto_extra=contexto_extra
         )
-        logger.info(f"🤖 Resposta gerada")
+        logger.info("🤖 Resposta gerada com sucesso")
     except Exception as e:
         logger.error(f"❌ Erro OpenAI: {e}")
         return {"status": "openai_error"}
@@ -132,7 +142,7 @@ async def webhook(request: Request):
     # SALVAR NO BANCO
     # ==================================================
 
-    salvar_mensagem(numero, mensagem, resposta, categoria)
+    salvar_mensagem(numero, mensagem_id, mensagem, resposta, categoria)
 
     # ==================================================
     # ENVIAR WHATSAPP
@@ -153,21 +163,21 @@ async def webhook(request: Request):
 # SALVAR MENSAGEM
 # ==================================================
 
-def salvar_mensagem(numero, mensagem, resposta, categoria):
+def salvar_mensagem(numero, mensagem_id, mensagem, resposta, categoria):
     try:
         conn = conectar()
         cursor = conn.cursor()
 
         cursor.execute("""
-            INSERT INTO mensagens (telefone, mensagem, resposta, categoria)
-            VALUES (%s, %s, %s, %s)
-        """, (numero, mensagem, resposta, categoria))
+            INSERT INTO mensagens (telefone, mensagem_id, mensagem, resposta, categoria)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (numero, mensagem_id, mensagem, resposta, categoria))
 
         conn.commit()
         cursor.close()
         conn.close()
 
-        logger.info("💾 Mensagem salva")
+        logger.info("💾 Mensagem salva no banco")
 
     except Exception as e:
         logger.error(f"❌ Erro ao salvar mensagem: {e}")
