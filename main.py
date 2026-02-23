@@ -2,8 +2,15 @@ import os
 import requests
 from fastapi import FastAPI, Request
 from agent import gerar_resposta
+from database import criar_tabelas, conectar
 
 app = FastAPI()
+
+# =============================
+# INICIALIZAÇÃO BANCO
+# =============================
+
+criar_tabelas()
 
 # =============================
 # VARIÁVEIS DE AMBIENTE
@@ -23,7 +30,7 @@ def health():
     return {
         "status": "ok",
         "agent": "Raquel Paz",
-        "version": "4.0"
+        "version": "5.0"
     }
 
 # =============================
@@ -37,7 +44,13 @@ async def webhook(request: Request):
     print("🔥 PAYLOAD RECEBIDO:")
     print(data)
 
+    # 🔒 Ignora mensagens enviadas pelo próprio agente (evita loop)
+    if data.get("fromMe"):
+        print("🔁 Mensagem ignorada (fromMe)")
+        return {"status": "ignored own message"}
+
     if data.get("isGroup"):
+        print("👥 Grupo ignorado")
         return {"status": "group ignored"}
 
     numero = data.get("phone")
@@ -55,13 +68,49 @@ async def webhook(request: Request):
     if not numero or not mensagem:
         return {"status": "no message"}
 
-    resposta = gerar_resposta(mensagem)
-    print("🤖 Resposta:", resposta)
+    try:
+        resposta = gerar_resposta(mensagem)
+        print("🤖 Resposta:", resposta)
 
-    enviar_whatsapp(numero, resposta)
-    registrar_crm(numero, mensagem)
+        # salva no banco
+        salvar_mensagem(numero, mensagem, resposta)
 
-    return {"status": "success"}
+        # envia whatsapp
+        enviar_whatsapp(numero, resposta)
+
+        # registra CRM opcional
+        registrar_crm(numero, mensagem)
+
+        return {"status": "success"}
+
+    except Exception as e:
+        print("❌ ERRO GERAL:", e)
+        return {"status": "error"}
+
+
+# =============================
+# SALVAR NO POSTGRES
+# =============================
+
+def salvar_mensagem(numero, mensagem, resposta):
+
+    try:
+        conn = conectar()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT INTO mensagens (telefone, mensagem, resposta, categoria)
+            VALUES (%s, %s, %s, %s)
+        """, (numero, mensagem, resposta, "auto"))
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        print("💾 Mensagem salva no banco")
+
+    except Exception as e:
+        print("❌ Erro ao salvar no banco:", e)
 
 
 # =============================
@@ -95,7 +144,6 @@ def enviar_whatsapp(numero, mensagem):
     }
 
     print("📤 Enviando mensagem para:", numero)
-    print("🔗 URL:", url)
 
     try:
         response = requests.post(url, json=payload, headers=headers)
