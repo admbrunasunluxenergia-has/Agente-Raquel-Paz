@@ -34,3 +34,40 @@ def criar_tabelas():
     conn.commit()
     cursor.close()
     conn.close()
+
+def buscar_historico(telefone):
+    conn = conectar()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT mensagem, resposta 
+        FROM mensagens 
+        WHERE telefone = %s 
+        ORDER BY criado_em DESC 
+        LIMIT 10
+    """, (telefone,))
+
+    historico = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    return historico
+
+
+def buscar_contato(telefone):
+    conn = conectar()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT nome, tipo 
+        FROM contatos 
+        WHERE telefone = %s
+    """, (telefone,))
+
+    contato = cursor.fetchone()
+
+    cursor.close()
+    conn.close()
+
+    return contato
