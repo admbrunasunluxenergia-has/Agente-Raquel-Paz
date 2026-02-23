@@ -1,69 +1,103 @@
 import os
+import unicodedata
 from datetime import datetime
-import pytz
+from zoneinfo import ZoneInfo
 from openai import OpenAI
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# ==================================================
+# NORMALIZAÇÃO
+# ==================================================
+
+def normalizar(texto: str) -> str:
+    texto = texto.lower().strip()
+    texto = unicodedata.normalize("NFD", texto)
+    texto = texto.encode("ascii", "ignore").decode("utf-8")
+    return texto
+
+
+# ==================================================
+# CLASSIFICAÇÃO MANUAL
+# ==================================================
+
+def classificar_mensagem(mensagem):
+
+    msg = normalizar(mensagem)
+
+    suporte = [
+        "problema", "inversor", "erro",
+        "manutencao", "segunda via",
+        "reclamacao", "suporte"
+    ]
+
+    prazo = [
+        "prazo", "demora",
+        "atraso", "quando vai instalar"
+    ]
+
+    orcamento = [
+        "orcamento", "energia solar",
+        "placa solar", "valor",
+        "simulacao", "projeto solar"
+    ]
+
+    saudacoes = [
+        "oi", "ola", "bom dia",
+        "boa tarde", "boa noite"
+    ]
+
+    # PRIORIDADE CORRETA
+    if any(p in msg for p in suporte):
+        return "SUPORTE"
+
+    if any(p in msg for p in prazo):
+        return "PRAZO"
+
+    if any(p in msg for p in orcamento):
+        return "ORCAMENTO"
+
+    if msg in saudacoes:
+        return "SAUDACAO"
+
+    return "OUTRO"
+
+
+# ==================================================
+# SAUDAÇÃO COM TIMEZONE CORRETO
+# ==================================================
 
 def saudacao_por_horario():
-    fuso = pytz.timezone("America/Sao_Paulo")
-    hora = datetime.now(fuso).hour
+    hora = datetime.now(ZoneInfo("America/Sao_Paulo")).hour
 
-    if 5 <= hora <= 11:
+    if 5 <= hora < 12:
         return "Bom dia"
-    elif 12 <= hora <= 17:
+    elif 12 <= hora < 18:
         return "Boa tarde"
     else:
         return "Boa noite"
 
 
-def classificar_mensagem(mensagem):
-    msg = mensagem.lower()
+# ==================================================
+# GERAÇÃO DE RESPOSTA
+# ==================================================
 
-    palavras_suporte = [
-        "problema", "inversor", "erro", "manutenção",
-        "segunda via", "reclamação", "suporte"
-    ]
+def gerar_resposta(mensagem_usuario, categoria, contexto_extra=""):
 
-    palavras_prazo = [
-        "prazo", "demora", "atraso", "quando vai instalar",
-        "está demorando"
-    ]
-
-    palavras_orcamento = [
-        "orçamento", "energia solar", "placa solar",
-        "sistema", "valor", "simulação"
-    ]
-
-    if any(p in msg for p in palavras_prazo):
-        return "PRAZO"
-
-    if any(p in msg for p in palavras_suporte):
-        return "SUPORTE"
-
-    if any(p in msg for p in palavras_orcamento):
-        return "ORCAMENTO"
-
-    return "SAUDACAO"
-
-
-def gerar_resposta(mensagem_usuario):
-
-    categoria = classificar_mensagem(mensagem_usuario)
-
-    # ===============================
+    # =========================
     # PRAZO
-    # ===============================
+    # =========================
+
     if categoria == "PRAZO":
         return (
             "Eu entendo sua preocupação e agradeço por me avisar.\n\n"
             "Vou verificar internamente com o setor responsável e retorno para você com a posição correta, tudo bem?"
         )
 
-    # ===============================
+    # =========================
     # SUPORTE
-    # ===============================
+    # =========================
+
     if categoria == "SUPORTE":
         return (
             "Obrigada pelo seu contato!\n\n"
@@ -71,32 +105,37 @@ def gerar_resposta(mensagem_usuario):
             "Vou encaminhar sua mensagem para ela e em breve você receberá o suporte necessário."
         )
 
-    # ===============================
-    # SAUDAÇÃO SIMPLES (OI)
-    # ===============================
+    # =========================
+    # SAUDAÇÃO
+    # =========================
+
     if categoria == "SAUDACAO":
         saudacao = saudacao_por_horario()
         return (
-            f"Olá, {saudacao}!\n"
+            f"{saudacao}!\n"
             "Eu me chamo Raquel Paz e sou Consultora Comercial da SUNLUX ENERGIA ☀️\n"
             "Como posso te ajudar hoje?"
         )
 
-    # ===============================
-    # ORÇAMENTO
-    # ===============================
+    # =========================
+    # ORÇAMENTO (USA GPT)
+    # =========================
+
     if categoria == "ORCAMENTO":
 
         prompt = f"""
 Você é Raquel Paz, Consultora Comercial da SUNLUX ENERGIA.
 
-Responda de forma profissional, clara e objetiva.
-Nunca informe prazo.
-Nunca invente valores.
-Finalize sempre com pergunta.
+Regras:
+- Nunca informe prazo.
+- Nunca invente valores.
+- Seja objetiva.
+- Finalize com pergunta.
 
 Cliente disse:
 "{mensagem_usuario}"
+
+{contexto_extra}
 
 Peça:
 1. Foto da fatura com kWh visível
@@ -107,11 +146,17 @@ Peça:
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",
+            temperature=0.3,
             messages=[
                 {"role": "system", "content": "Você é especialista em vendas consultivas de energia solar."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.4
         )
 
         return response.choices[0].message.content
+
+    # =========================
+    # OUTRO
+    # =========================
+
+    return "Pode me explicar um pouco melhor para eu te ajudar da melhor forma?"
