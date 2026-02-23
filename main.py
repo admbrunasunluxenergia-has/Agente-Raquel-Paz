@@ -36,21 +36,17 @@ def health():
 # =============================
 # WEBHOOK RECEBIMENTO
 # =============================
+from database import buscar_historico, buscar_contato
 
 @app.post("/webhook")
 async def webhook(request: Request):
 
     data = await request.json()
-    print("🔥 PAYLOAD RECEBIDO:")
-    print(data)
 
-    # 🔒 Ignora mensagens enviadas pelo próprio agente (evita loop)
     if data.get("fromMe"):
-        print("🔁 Mensagem ignorada (fromMe)")
         return {"status": "ignored own message"}
 
     if data.get("isGroup"):
-        print("👥 Grupo ignorado")
         return {"status": "group ignored"}
 
     numero = data.get("phone")
@@ -58,36 +54,39 @@ async def webhook(request: Request):
 
     if isinstance(data.get("text"), dict):
         mensagem = data.get("text", {}).get("message")
-
     elif isinstance(data.get("message"), str):
         mensagem = data.get("message")
-
-    print("📞 Número:", numero)
-    print("💬 Mensagem:", mensagem)
 
     if not numero or not mensagem:
         return {"status": "no message"}
 
-    try:
-        resposta = gerar_resposta(mensagem)
-        print("🤖 Resposta:", resposta)
+    # 🔎 Buscar histórico
+    historico = buscar_historico(numero)
 
-        # salva no banco
-        salvar_mensagem(numero, mensagem, resposta)
+    # 🔎 Buscar contato (interno ou cliente)
+    contato = buscar_contato(numero)
 
-        # envia whatsapp
-        enviar_whatsapp(numero, resposta)
+    contexto_extra = ""
 
-        # registra CRM opcional
-        registrar_crm(numero, mensagem)
+    if contato:
+        nome, tipo = contato
+        contexto_extra += f"\nContato identificado: {nome} ({tipo})"
 
-        return {"status": "success"}
+    if historico:
+        contexto_extra += "\nHistórico recente:\n"
+        for h in historico:
+            contexto_extra += f"Cliente: {h[0]}\nRaquel: {h[1]}\n"
 
-    except Exception as e:
-        print("❌ ERRO GERAL:", e)
-        return {"status": "error"}
+    # 👇 envia mensagem + contexto para o agente
+    resposta = gerar_resposta(mensagem + contexto_extra)
 
+    salvar_mensagem(numero, mensagem, resposta)
 
+    enviar_whatsapp(numero, resposta)
+
+    registrar_crm(numero, mensagem)
+
+    return {"status": "success"}
 # =============================
 # SALVAR NO POSTGRES
 # =============================
