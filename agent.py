@@ -2,9 +2,9 @@ import os
 import unicodedata
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from openai import OpenAI
+import openai
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 
 def normalizar(texto: str) -> str:
@@ -115,18 +115,18 @@ Peça:
 4. Nome completo
 """
 
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
                 temperature=0.3,
                 messages=[
                     {"role": "system", "content": "Você é especialista em vendas consultivas de energia solar."},
                     {"role": "user", "content": prompt}
-                ],
+                ]
             )
 
-            return response.choices[0].message.content
+            return response["choices"][0]["message"]["content"]
 
         return "Pode me explicar um pouco melhor para eu te ajudar da melhor forma?"
 
-    except Exception:
+    except Exception as e:
         return "Tive uma instabilidade interna agora. Pode repetir sua mensagem por favor?"
